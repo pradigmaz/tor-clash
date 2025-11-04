@@ -1,0 +1,7 @@
+# Пример конфигурации Tor
+# При первом запуске создаётся автоматически с уникальным хешированным паролем
+
+SocksPort 9050
+ControlPort 9061
+HashedControlPassword 16:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+CookieAuthentication 0

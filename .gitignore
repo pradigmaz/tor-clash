@@ -1,0 +1,46 @@
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+*.exe
+
+torrc
+*.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+svalka/
+
+.kiro/
+
+pluggable_transports/
+
+# Test files
+test_*.py
+test_setup_output/
+test_configs/
+
+# Backup files
+*.backup_*
