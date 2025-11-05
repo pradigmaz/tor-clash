@@ -5,10 +5,13 @@ import logging
 from typing import Optional
 from dataclasses import dataclass
 
+from stem import Signal
+from stem.control import Controller
+
 from .config import (
     TOR_PATH, TOR_RC, CLASH_PATH, 
     CREATE_NO_WINDOW, PROCESS_KILL_TIMEOUT,
-    CLASH_PORT, DEFAULT_INTERVAL
+    CLASH_PORT, DEFAULT_INTERVAL, CONTROL_PORT, CONTROL_PASSWORD
 )
 from .proxy_manager import enable_system_proxy, disable_system_proxy
 
@@ -22,6 +25,7 @@ class RotatorState:
     clash_process: Optional[subprocess.Popen] = None
     enabled: bool = True
     interval_seconds: float = DEFAULT_INTERVAL * 3600
+    ip_checker: Optional[object] = None  # IPChecker instance
 
 
 class ProcessManager:
@@ -112,6 +116,32 @@ class ProcessManager:
         self._stop_process(self.state.clash_process, "Clash")
         self.state.clash_process = None
         disable_system_proxy()
+    
+    def change_ip(self) -> str:
+        """
+        Меняет IP через Tor и возвращает новый адрес.
+        
+        Returns:
+            Новый IP адрес или "—" при ошибке
+        """
+        try:
+            # Отправка сигнала NEWNYM в Tor
+            with Controller.from_port(port=CONTROL_PORT) as controller:
+                controller.authenticate(password=CONTROL_PASSWORD)
+                controller.signal(Signal.NEWNYM)
+            
+            # Получение нового IP
+            if self.state.ip_checker:
+                new_ip = self.state.ip_checker.get_ip()
+                logger.info(f"IP изменён: {new_ip}")
+                return new_ip
+            else:
+                logger.warning("IP checker не инициализирован")
+                return "—"
+                
+        except Exception as e:
+            logger.error(f"Ошибка смены IP: {e}", exc_info=True)
+            return "—"
     
     def _stop_process(self, process: Optional[subprocess.Popen], name: str) -> None:
         """

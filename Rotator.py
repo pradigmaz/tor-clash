@@ -5,10 +5,8 @@ import logging
 import signal
 import atexit
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from concurrent.futures import ThreadPoolExecutor
-from stem import Signal
-from stem.control import Controller
 
 from kivymd.app import MDApp
 from kivymd.uix.screen import MDScreen
@@ -32,7 +30,7 @@ from kivy.lang import Builder
 from core.process_manager import ProcessManager
 from core.ip_checker import ClashIPChecker
 from core import config
-from core.validator import IntervalValidator
+from core.validator import IntervalValidator, TimeUnit
 from core.setup_dialog import SetupDialog
 
 # Настройка логирования
@@ -62,14 +60,6 @@ PADDING = dp(20)
 SPACING = dp(15)
 CARD_PADDING = dp(15)
 CARD_SPACING = dp(10)
-
-# Валидация интервалов
-MIN_INTERVAL_SECONDS = 1
-MAX_INTERVAL_SECONDS = 86400
-MIN_INTERVAL_MINUTES = 0.01
-MAX_INTERVAL_MINUTES = 1440
-MIN_INTERVAL_HOURS = 0.01
-MAX_INTERVAL_HOURS = 24
 
 # KV для MDSwitch
 KV = '''
@@ -132,6 +122,8 @@ class RotatorApp(MDApp):
         """Инициализация менеджеров процессов и IP."""
         self.process_manager = ProcessManager()
         self.ip_checker = ClashIPChecker(config.CLASH_PORT)
+        # Передаём ip_checker в ProcessManager для инкапсуляции
+        self.process_manager.state.ip_checker = self.ip_checker
     
     def _signal_handler(self, signum: int, frame: Any) -> None:
         """
@@ -164,12 +156,49 @@ class RotatorApp(MDApp):
         self.theme_cls.theme_style = "Dark"
         self.theme_cls.primary_palette = "DeepPurple"
         
-        self.unit_value = "часов"
+        self.unit_value: TimeUnit = "часов"
         
         screen = MDScreen()
         layout = MDBoxLayout(orientation='vertical', padding=PADDING, spacing=SPACING)
         
-        # Status Card (IP + State)
+        # Создание UI компонентов через отдельные методы
+        layout.add_widget(self._create_status_card())
+        layout.add_widget(self._create_interval_card())
+        layout.add_widget(self._create_toggle_card())
+        layout.add_widget(self._create_buttons_box())
+        
+        screen.add_widget(layout)
+        
+        # Создание меню для выбора единиц
+        menu_items = [
+            {"text": "секунд", "on_release": lambda x="секунд": self.set_unit(x)},
+            {"text": "минут", "on_release": lambda x="минут": self.set_unit(x)},
+            {"text": "часов", "on_release": lambda x="часов": self.set_unit(x)},
+        ]
+        self.unit_menu = MDDropdownMenu(
+            caller=self.unit_btn,
+            items=menu_items,
+            width_mult=3
+        )
+        
+        # Запуск фонового потока
+        self.start_rotator_thread()
+        
+        # Автозапуск только если конфиг готов
+        if self.process_manager:
+            self.process_manager.start_tor()
+            self.process_manager.start_clash()
+            Clock.schedule_once(lambda dt: self.change_ip(), 1)
+        
+        return screen
+    
+    def _create_status_card(self) -> MDCard:
+        """
+        Создаёт карточку отображения статуса (IP + состояние ротации).
+        
+        Returns:
+            MDCard с IP и состоянием
+        """
         status_card = MDCard(
             orientation='vertical',
             padding=CARD_PADDING,
@@ -209,9 +238,15 @@ class RotatorApp(MDApp):
         )
         status_card.add_widget(self.state_label)
         
-        layout.add_widget(status_card)
+        return status_card
+    
+    def _create_interval_card(self) -> MDCard:
+        """
+        Создаёт карточку настройки интервала ротации.
         
-        # Interval Settings Card
+        Returns:
+            MDCard с настройками интервала
+        """
         interval_card = MDCard(
             orientation='vertical',
             padding=CARD_PADDING,
@@ -252,9 +287,15 @@ class RotatorApp(MDApp):
         interval_box.add_widget(self.apply_btn)
         
         interval_card.add_widget(interval_box)
-        layout.add_widget(interval_card)
+        return interval_card
+    
+    def _create_toggle_card(self) -> MDCard:
+        """
+        Создаёт карточку переключателя автоматической ротации.
         
-        # Toggle Card with Switch
+        Returns:
+            MDCard с переключателем
+        """
         toggle_card_content = Builder.load_string('''
 MDCard:
     orientation: 'vertical'
@@ -280,9 +321,15 @@ MDCard:
         ''')
         self.rotation_switch = toggle_card_content.ids.rotation_switch
         self.rotation_switch.bind(active=self.on_switch_active)
-        layout.add_widget(toggle_card_content)
+        return toggle_card_content
+    
+    def _create_buttons_box(self) -> MDBoxLayout:
+        """
+        Создаёт панель кнопок (смена IP + перенастройка).
         
-        # Buttons Box
+        Returns:
+            MDBoxLayout с кнопками
+        """
         buttons_box = MDBoxLayout(
             spacing=CARD_SPACING,
             size_hint=(1, None),
@@ -312,32 +359,7 @@ MDCard:
         self.reconfig_btn.bind(on_release=lambda x: self.show_setup_wizard())
         buttons_box.add_widget(self.reconfig_btn)
         
-        layout.add_widget(buttons_box)
-        
-        screen.add_widget(layout)
-        
-        # Создание меню для выбора единиц
-        menu_items = [
-            {"text": "секунд", "on_release": lambda x="секунд": self.set_unit(x)},
-            {"text": "минут", "on_release": lambda x="минут": self.set_unit(x)},
-            {"text": "часов", "on_release": lambda x="часов": self.set_unit(x)},
-        ]
-        self.unit_menu = MDDropdownMenu(
-            caller=self.unit_btn,
-            items=menu_items,
-            width_mult=3
-        )
-        
-        # Запуск фонового потока
-        self.start_rotator_thread()
-        
-        # Автозапуск только если конфиг готов
-        if self.process_manager:
-            self.process_manager.start_tor()
-            self.process_manager.start_clash()
-            Clock.schedule_once(lambda dt: self.change_ip(), 1)
-        
-        return screen
+        return buttons_box
     
     def show_unit_menu(self, instance: Any) -> None:
         """
@@ -348,7 +370,7 @@ MDCard:
         """
         self.unit_menu.open()
     
-    def set_unit(self, unit: str) -> None:
+    def set_unit(self, unit: TimeUnit) -> None:
         """
         Устанавливает единицу измерения интервала.
         
@@ -451,19 +473,15 @@ MDCard:
         """
         Асинхронная смена IP (выполняется в пуле потоков).
         """
-        if not self.ip_checker:
-            logger.warning("IP checker не инициализирован")
+        if not self.process_manager:
+            logger.warning("Process manager не инициализирован")
             return
-            
-        try:
-            with Controller.from_port(port=config.CONTROL_PORT) as c:
-                c.authenticate(password=config.CONTROL_PASSWORD)
-                c.signal(Signal.NEWNYM)
-            new_ip = self.ip_checker.get_ip()
-            Clock.schedule_once(lambda dt: setattr(self.ip_label, 'text', f"Текущий IP: {new_ip}"), 0)
-        except Exception as e:
-            logger.error(f"Ошибка смены IP: {e}")
-            Clock.schedule_once(lambda dt: setattr(self.ip_label, 'text', "Ошибка смены IP"), 0)
+        
+        # Бизнес-логика делегирована в ProcessManager
+        new_ip = self.process_manager.change_ip()
+        
+        # Обновление UI в главном потоке
+        Clock.schedule_once(lambda dt: setattr(self.ip_label, 'text', f"Текущий IP: {new_ip}"), 0)
     
     def start_rotator_thread(self) -> None:
         """
